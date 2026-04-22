@@ -1,0 +1,93 @@
+#include <IRremote.hpp>  
+#include <EEPROM.h>  
+
+#define IR_RECEIVE_PIN 11  
+
+const int RELAY_PINS[]  = {7, 6, 8, 9};     
+const int ROCKER_PINS[] = {4, 5, 2, 3};     
+const int LED_PINS[]    = {A0, A1, A2, A3};  
+
+bool relayStates[4];  
+bool lastRockerStates[4];  
+
+void syncHardware(int index) {  
+  digitalWrite(RELAY_PINS[index], relayStates[index] ? LOW : HIGH);  
+  digitalWrite(LED_PINS[index], relayStates[index] ? HIGH : LOW);  
+  EEPROM.update(index, relayStates[index]);  
+}  
+
+void toggleAllRelays() {  
+  bool anyOn = false;  
+  for (int i = 0; i < 4; i++) {  
+    if (relayStates[i]) {  
+      anyOn = true;  
+      break;  
+    }  
+  }  
+
+  bool targetState = !anyOn;  
+  for (int i = 0; i < 4; i++) {  
+    relayStates[i] = targetState;  
+    syncHardware(i);  
+  }  
+}  
+
+void setup() {  
+  Serial.begin(9600);   // ⚠️ Bluetooth default baud (HC-05/HC-06)
+
+  for (int i = 0; i < 4; i++) {  
+    pinMode(RELAY_PINS[i], OUTPUT);  
+    pinMode(LED_PINS[i], OUTPUT);  
+    pinMode(ROCKER_PINS[i], INPUT_PULLUP);  
+
+    relayStates[i] = EEPROM.read(i);  
+    syncHardware(i);  
+    lastRockerStates[i] = digitalRead(ROCKER_PINS[i]);  
+  }  
+
+  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);  
+}  
+
+void loop() {  
+
+  // --- ROCKER SWITCH ---
+  for (int i = 0; i < 4; i++) {  
+    bool current = digitalRead(ROCKER_PINS[i]);  
+    if (current != lastRockerStates[i]) {  
+      delay(20);  
+      if (digitalRead(ROCKER_PINS[i]) == current) {  
+        relayStates[i] = !relayStates[i];  
+        lastRockerStates[i] = current;  
+        syncHardware(i);  
+      }  
+    }  
+  }  
+
+  // --- IR REMOTE ---
+  if (IrReceiver.decode()) {  
+
+    unsigned long code = IrReceiver.decodedIRData.decodedRawData;  
+
+    if (code == 0xF50A7F80) { relayStates[0] = !relayStates[0]; syncHardware(0); }  
+    else if (code == 0xE41B7F80) { relayStates[1] = !relayStates[1]; syncHardware(1); }  
+    else if (code == 0xE01F7F80) { relayStates[2] = !relayStates[2]; syncHardware(2); }  
+    else if (code == 0xF30C7F80) { relayStates[3] = !relayStates[3]; syncHardware(3); }  
+    else if (code == 0xED127F80) { toggleAllRelays(); }  
+
+    IrReceiver.resume();  
+  }  
+
+  // --- BLUETOOTH (HARDWARE SERIAL) ---
+  if (Serial.available()) {  
+    char cmd = Serial.read();  
+
+    if (cmd == 'A' || cmd == 'a') { relayStates[0] = !relayStates[0]; syncHardware(0); }  
+    else if (cmd == 'B' || cmd == 'b') { relayStates[1] = !relayStates[1]; syncHardware(1); }  
+    else if (cmd == 'C' || cmd == 'c') { relayStates[2] = !relayStates[2]; syncHardware(2); }  
+    else if (cmd == 'D' || cmd == 'd') { relayStates[3] = !relayStates[3]; syncHardware(3); }  
+    else if (cmd == '0') { toggleAllRelays(); }  
+
+    delay(5);  
+    while (Serial.available()) Serial.read();  
+  }  
+}
